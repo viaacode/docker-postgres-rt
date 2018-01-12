@@ -7,9 +7,9 @@ RUN apt-get update \
 RUN echo "postgres ALL=(root) NOPASSWD:/usr/bin/socat" >/etc/sudoers.d/socat
 
 COPY import.sh /docker-entrypoint-initdb.d/10-import.sh
-COPY load.sh /
-COPY recover.sh /
-RUN ln /recover.sh /hotstandby.sh 
+COPY load.sh /usr/local/bin/
+COPY recover.sh /usr/local/bin/
+RUN ln /usr/local/bin/recover.sh /usr/local/bin/hotstandby.sh
 
 ENV RECOVERY_AREA /recovery_area
 ENV RECOVERY_SOCKET "unix:/recovery_socket"
