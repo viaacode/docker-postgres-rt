@@ -8,7 +8,7 @@ case  $(basename $0) in
     *)
         HOTSTANDBY='off' ;;
 esac
-    
+
 if [ ! -s "$PGDATA/PG_VERSION" ]; then
 
     SRCDATADIR="$1"
@@ -24,7 +24,6 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
     rm -fr $PGDATADIR
     rm -f  $RECOVERY_AREA/[0-9A-F]*[0-9A-F]
     # Do not recover pg_xlog (this is needed when not symlinked outside)
-    #echo "$SRCDATADIR/pg_xlog/**" >$RECOVERY_AREA/exclude.lst
     echo "$(date '+%m/%d %H:%M:%S'): Recovering Database files"
     cat <<EOF | socat -,ignoreeof $RECOVERY_SOCKET
     { \
@@ -35,29 +34,26 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
         "exclude": ["$SRCDATADIR/pg_xlog/**"] \
     }
 EOF
-    # logs are restored in $RECOVERY_AREA, postgres must be able to mv them
-    chown postgres $RECOVERY_AREA
-    
     # if pg_xlog is a symlink, replace it by a directory:
     [ -L $PGDATADIR/pg_xlog ] && rm $PGDATADIR/pg_xlog
-    [ -d $PGDATADIR/pg_xlog ] || gosu postgres mkdir $PGDATADIR/pg_xlog
-    
+    [ -d $PGDATADIR/pg_xlog ] || mkdir $PGDATADIR/pg_xlog
+
     for i in $PGDATADIR/*; do ln -s $i $PGDATA/; done
-    
+
     # Create recovery.conf file
-    gosu postgres cat <<-EOF >$PGDATA/recovery.conf
+    cat <<-EOF >$PGDATA/recovery.conf
         standby_mode=$HOTSTANDBY
-        restore_command='echo ''{"client": "$HOSTNAME", "path": "$SRCXLOGDIR/%f", "uid": "$PGUID"}'' | sudo socat -,ignoreeof $RECOVERY_SOCKET; mv $RECOVERY_AREA/%f $PGDATA/%p'
+        restore_command='echo ''{"client": "$HOSTNAME", "path": "$SRCXLOGDIR/%f", "uid": "$PGUID"}'' | socat -,ignoreeof $RECOVERY_SOCKET; mv $RECOVERY_AREA/%f $PGDATA/%p'
 	EOF
     [ "$Time" != "null" ] && echo "recovery_target_time='$Time'" >>$PGDATA/recovery.conf
 
-    [ -e $PGDATA/pg_ident.conf ] || gosu postgres touch $PGDATA/pg_ident.conf
-    gosu postgres cp /usr/share/postgresql/postgresql.conf.sample $PGDATA/postgresql.conf
-    gosu postgres sed -ri "s/#? *hot_standby *= *\\w+/hot_standby = $HOTSTANDBY/" $PGDATA/postgresql.conf 
-    gosu postgres sed -ri 's/#? *max_connections *= *\w+/max_connections = 500/' $PGDATA/postgresql.conf 
-    gosu postgres echo "host all all samenet trust" > "$PGDATA/pg_hba.conf"
-    gosu postgres echo "local all all trust"  >> "$PGDATA/pg_hba.conf"
-    
+    [ -e $PGDATA/pg_ident.conf ] || touch $PGDATA/pg_ident.conf
+    cp /usr/share/postgresql/postgresql.conf.sample $PGDATA/postgresql.conf
+    sed -ri "s/#? *hot_standby *= *\\w+/hot_standby = $HOTSTANDBY/" $PGDATA/postgresql.conf
+    sed -ri 's/#? *max_connections *= *\w+/max_connections = 500/' $PGDATA/postgresql.conf
+    echo "host all all samenet trust" > "$PGDATA/pg_hba.conf"
+    echo "local all all trust"  >> "$PGDATA/pg_hba.conf"
+
     echo -e "\n$(date '+%m/%d %H:%M:%S'): Recovery report for $HOSTNAME:\n" >>$REPORT
     cat $PGDATADIR/backup_label 2>&1 | tee -a $REPORT
     echo "$(date '+%m/%d %H:%M:%S'): Starting postgres recovery (hot_standby = $HOTSTANDBY)"
@@ -80,9 +76,9 @@ EOF
             [ $(expr "$line" : 'LOG:\s*database system is ready to accept connections') -gt 0 ] && break
         done
 
-        # non-zero exit code occurs when the tailcop file descriptor was closed before 
+        # non-zero exit code occurs when the tailcop file descriptor was closed before
         # we broke out of the loop
-        # for example, postgres stopped or was stopped by the timeout killer 
+        # for example, postgres stopped or was stopped by the timeout killer
         [ $? -ne 0 ] && echo "$(date '+%m/%d %H:%M:%S'): Database recovery failed" | tee -a $REPORT && exit 1
 
         # Recovery completed, kill the timeout killer
@@ -90,7 +86,7 @@ EOF
         pkill -x sleep
 
         echo "$(date '+%m/%d %H:%M:%S'): Checking database integrity"
-        gosu postgres pg_dumpall -v -f /dev/null 
+        pg_dumpall -v -f /dev/null
         RC=$? # save rc
         echo "$(date '+%m/%d %H:%M:%S'): Database integrity check endend with exit code $RC" | tee -a $REPORT
         [ $RC -ne 0 ] && echo "$(date '+%m/%d %H:%M:%S'): Database integrity check failed" && exit $RC
