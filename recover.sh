@@ -15,17 +15,17 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
     SRCXLOGDIR=${2:-$SRCDATADIR/pg_xlog}
     Time=${3:-null}
 
-    PGDATADIR="$RECOVERY_AREA/$(basename $SRCDATADIR)"
+    PGDATADIR="$RecoveryArea/$(basename $SRCDATADIR)"
     PGUID=$(id -u postgres)
-    REPORT="$RECOVERY_AREA/recovery_report.txt"
+    REPORT="$RecoveryArea/recovery_report.txt"
     [ -e $REPORT ] && rm -f $REPORT
 
     # Clean up
     rm -fr $PGDATADIR
-    rm -f  $RECOVERY_AREA/[0-9A-F]*[0-9A-F]
+    rm -f  $RecoveryArea/[0-9A-F]*[0-9A-F]
     # Do not recover pg_xlog (this is needed when not symlinked outside)
     echo "$(date '+%m/%d %H:%M:%S'): Recovering Database files"
-    cat <<EOF | socat -,ignoreeof $RECOVERY_SOCKET
+    cat <<EOF | socat -,ignoreeof $RecoverySocket
     { \
         "client": "$HOSTNAME", \
         "path": "$SRCDATADIR", \
@@ -43,7 +43,7 @@ EOF
     # Create recovery.conf file
     cat <<-EOF >$PGDATA/recovery.conf
         standby_mode=$HOTSTANDBY
-        restore_command='echo ''{"client": "$HOSTNAME", "path": "$SRCXLOGDIR/%f", "uid": "$PGUID"}'' | socat -,ignoreeof $RECOVERY_SOCKET; mv $RECOVERY_AREA/%f $PGDATA/%p'
+        restore_command='echo ''{"client": "$HOSTNAME", "path": "$SRCXLOGDIR/%f", "uid": "$PGUID"}'' | socat -,ignoreeof $RecoverySocket; mv $RecoveryArea/%f $PGDATA/%p'
 	EOF
     [ "$Time" != "null" ] && echo "recovery_target_time='$Time'" >>$PGDATA/recovery.conf
 

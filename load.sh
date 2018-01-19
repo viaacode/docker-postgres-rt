@@ -6,13 +6,13 @@
 if [ ! -s "$PGDATA/PG_VERSION" ]; then
 
     ORIGDUMP=$1
-    DUMPFILE="$RECOVERY_AREA/$(basename $ORIGDUMP)"
+    DUMPFILE="$RecoveryArea/$(basename $ORIGDUMP)"
     Time=${2:-null}
     
     # Recover the dump file(s) name it (them) pgdump
     echo "$(date '+%m/%d %H:%M:%S'): Recovering dump file: $DUMPFILE"
     [ -r $DUMPFILE ] && rm -fr $DUMPFILE
-    cat <<EOF  | socat  -,ignoreof $RECOVERY_SOCKET
+    cat <<EOF  | socat  -,ignoreof $RecoverySocket
     { \
         "client": "$HOSTNAME", \
         "path": "$ORIGDUMP", \
@@ -21,7 +21,7 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
     }
 EOF
     [ -r $DUMPFILE ] || exit 5
-    mv $DUMPFILE "$RECOVERY_AREA/pgdump"
+    mv $DUMPFILE "$RecoveryArea/pgdump"
     echo "$(date '+%m/%d %H:%M:%S'): Starting postgres init"
     # Start postgres without listening on a tcp socket
     coproc tailcop { exec docker-entrypoint.sh -h '' 2>&1; }
