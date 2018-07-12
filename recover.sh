@@ -79,45 +79,42 @@ EOF
     cat $PGDATADIR/backup_label 2>&1 | tee -a $REPORT
     echo "$(date '+%m/%d %H:%M:%S'): Starting postgres recovery (hot_standby = $HOTSTANDBY)"
 
-    # When not called as hotstandby, recover the datavase and stop
-    if [ $HOTSTANDBY == 'off' ]; then
-        echo "$(date '+%m/%d %H:%M:%S'): Starting postgres recovery"
-        # Start postgres without listening on a tcp socket
-        coproc tailcop { exec docker-entrypoint.sh -h '' 2>&1; }
+    echo "$(date '+%m/%d %H:%M:%S'): Starting postgres recovery"
+    # Start postgres without listening on a tcp socket
+    coproc tailcop { exec docker-entrypoint.sh -h '' 2>&1; }
 
-        # initiate a timeout killer that will stop popstgres if recovery takes too long
-        sleep 10800 && echo "$(date '+%m/%d %H:%M:%S'): Timeout during recovery" && kill $tailcop_PID &
+    # initiate a timeout killer that will stop popstgres if recovery takes too long
+    sleep 10800 && echo "$(date '+%m/%d %H:%M:%S'): Timeout during recovery" && kill $tailcop_PID &
 
-        # Show progress while waiting untill recovery is complete
-        while read -ru ${tailcop[0]} line; do
-            echo $line
-            [ $(expr "$line" : 'LOG:\s*redo') -gt 0 ] && echo $line >>$REPORT
-            [ $(expr "$line" : 'LOG:\s*last completed transaction was at log time') -gt 0 ] && echo $line >>$REPORT
-            [ $(expr "$line" : 'LOG:\s*consistent recovery state reached') -gt 0 ] && echo $line >>$REPORT
-            [ $(expr "$line" : 'LOG:\s*database system is ready to accept connections') -gt 0 ] && break
-        done
+    # Show progress while waiting untill recovery is complete
+    while read -ru ${tailcop[0]} line; do
+        echo $line
+        [ $(expr "$line" : 'LOG:\s*redo') -gt 0 ] && echo $line >>$REPORT
+        [ $(expr "$line" : 'LOG:\s*last completed transaction was at log time') -gt 0 ] && echo $line >>$REPORT
+        [ $(expr "$line" : 'LOG:\s*consistent recovery state reached') -gt 0 ] && echo $line >>$REPORT
+        [ $(expr "$line" : 'LOG:\s*database system is ready to accept .*connections') -gt 0 ] && break
+    done
 
-        # non-zero exit code occurs when the tailcop file descriptor was closed before
-        # we broke out of the loop
-        # for example, postgres stopped or was stopped by the timeout killer
-        [ $? -ne 0 ] && echo "$(date '+%m/%d %H:%M:%S'): Database recovery failed" | tee -a $REPORT && exit 1
+    # non-zero exit code occurs when the tailcop file descriptor was closed before
+    # we broke out of the loop
+    # for example, postgres stopped or was stopped by the timeout killer
+    [ $? -ne 0 ] && echo "$(date '+%m/%d %H:%M:%S'): Database recovery failed" | tee -a $REPORT && exit 1
 
-        # Recovery completed, kill the timeout killer
-        # A bit rough, but hey we are in a container there will be only one sleep
-        pkill -x sleep
+    # Recovery completed, kill the timeout killer
+    # A bit rough, but hey we are in a container there will be only one sleep
+    pkill -x sleep
 
-        echo "$(date '+%m/%d %H:%M:%S'): Checking database integrity"
-        pg_dumpall -v -f /dev/null
-        RC=$? # save rc
-        echo "$(date '+%m/%d %H:%M:%S'): Database integrity check endend with exit code $RC" | tee -a $REPORT
-        [ $RC -ne 0 ] && echo "$(date '+%m/%d %H:%M:%S'): Database integrity check failed" && exit $RC
+    echo "$(date '+%m/%d %H:%M:%S'): Checking database integrity"
+    pg_dumpall -v -f /dev/null
+    RC=$? # save rc
+    echo "$(date '+%m/%d %H:%M:%S'): Database integrity check endend with exit code $RC" | tee -a $REPORT
+    [ $RC -ne 0 ] && echo "$(date '+%m/%d %H:%M:%S'): Database integrity check failed" && exit $RC
 
-        echo "$(date '+%m/%d %H:%M:%S'): Shutting down postgres"
-        # Stop the coprocess and show it's output while waiting for it to stop
-        kill $tailcop_PID
-        cat <&${tailcop[0]}
-        exit 0
-    fi
+    echo "$(date '+%m/%d %H:%M:%S'): Shutting down postgres"
+    # Stop the coprocess and show it's output while waiting for it to stop
+    kill $tailcop_PID
+    cat <&${tailcop[0]}
+    exit 0
 fi
 
 # Xhen called as hotstandby or with docker start with existing PGDATA,
