@@ -10,7 +10,6 @@ RUN apt-get update \
 #   local postgres user can write to the recovery socket and access the recovery area
 RUN usermod -G $RecoveryAreaGid postgres
 
-COPY import.sh /docker-entrypoint-initdb.d/10-import.sh
 COPY load.sh /usr/local/bin/
 COPY recover.sh /usr/local/bin/
 RUN ln /usr/local/bin/recover.sh /usr/local/bin/hotstandby.sh
@@ -18,4 +17,5 @@ RUN ln /usr/local/bin/recover.sh /usr/local/bin/hotstandby.sh
 ENV RecoveryArea /recovery_area
 ENV RecoverySocket "unix:/recovery_socket"
 
+RUN chown postgres /docker-entrypoint-initdb.d
 USER postgres

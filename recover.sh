@@ -14,7 +14,8 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
     SRCDATADIR="$1"
     SRCXLOGDIR=${2:-$SRCDATADIR/pg_xlog}
     Time=${3:-null}
-
+    TableSpace="$4"   # Temporary support for tablespaces
+    
     PGDATADIR="$RecoveryArea/$(basename $SRCDATADIR)"
     PGUID=$(id -u postgres)
     REPORT="$RecoveryArea/recovery_report.txt"
@@ -34,6 +35,26 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
         "exclude": ["$SRCDATADIR/pg_xlog/**"] \
     }
 EOF
+   # Temporary support for tablespaces
+   # problem is that they have absolute pathnames
+   # This runs unprivilged and hence will fail if the path is not writable
+   # by postgres user
+
+   if [ -n "$TableSpace" ]; then
+        TableSpaceDir="$RecoveryArea/$(basename $TableSpace)"
+        rm -fr $TableSpaceDir
+        cat <<EOF | socat -,ignoreeof $RecoverySocket
+        { \
+            "client": "$HOSTNAME", \
+            "path": "$TableSpace", \
+            "uid": "$PGUID", \
+            "time": "$Time" \
+        }
+EOF
+        [ -d $(dirname $TableSpace) ] || mkdir $(dirname $TableSpace)
+        ln -s $TableSpaceDir $TableSpace
+    fi
+
     # if pg_xlog is a symlink, replace it by a directory:
     [ -L $PGDATADIR/pg_xlog ] && rm $PGDATADIR/pg_xlog
     [ -d $PGDATADIR/pg_xlog ] || mkdir $PGDATADIR/pg_xlog
