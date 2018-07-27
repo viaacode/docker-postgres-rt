@@ -1,4 +1,4 @@
-FROM postgres:9.4
+FROM postgres:9.6
 MAINTAINER Herwig Bogaert
 
 ARG RecoveryAreaGid=4
