@@ -70,8 +70,9 @@ EOF
 
     [ -e $PGDATA/pg_ident.conf ] || touch $PGDATA/pg_ident.conf
     cp /usr/share/postgresql/postgresql.conf.sample $PGDATA/postgresql.conf
-    sed -ri "s/#? *hot_standby *= *\\w+/hot_standby = $HOTSTANDBY/" $PGDATA/postgresql.conf
-    sed -ri 's/#? *max_connections *= *\w+/max_connections = 500/' $PGDATA/postgresql.conf
+    sed -ri "s/#?\\s*(hot_standby\\s*=)[^#]*/\1 $HOTSTANDBY /" $PGDATA/postgresql.conf
+    sed -ri 's/#?\s*(max_connections\s*=)[^#]*/\1 500 /' $PGDATA/postgresql.conf
+    sed -ri 's/#?\s*(max_standby_archive_delay\s*=)[^#]*/\1 -1 /' $PGDATA/postgresql.conf
     echo "host all all samenet trust" > "$PGDATA/pg_hba.conf"
     echo "local all all trust"  >> "$PGDATA/pg_hba.conf"
 
@@ -105,8 +106,10 @@ EOF
     pkill -x sleep
 
     echo "$(date '+%m/%d %H:%M:%S'): Checking database integrity"
+    [ $HOTSTANDBY == 'on' ] &&  psql -qc  "select pg_xlog_replay_pause();"
     pg_dumpall -v -f /dev/null
     RC=$? # save rc
+    [ $HOTSTANDBY == 'on' ] &&  psql -qc  "select pg_xlog_replay_resume();"
     echo "$(date '+%m/%d %H:%M:%S'): Database integrity check endend with exit code $RC" | tee -a $REPORT
     [ $RC -ne 0 ] && echo "$(date '+%m/%d %H:%M:%S'): Database integrity check failed" && exit $RC
 
