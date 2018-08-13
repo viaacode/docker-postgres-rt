@@ -84,26 +84,33 @@ EOF
     # Start postgres without listening on a tcp socket
     coproc tailcop { exec docker-entrypoint.sh -h '' 2>&1; }
 
+    exec 3<&${tailcop[0]}
+
     # initiate a timeout killer that will stop popstgres if recovery takes too long
-    sleep 10800 && echo "$(date '+%m/%d %H:%M:%S'): Timeout during recovery" && kill $tailcop_PID &
+    coproc timeout {
+        sleep 10800 &&
+        echo "$(date '+%m/%d %H:%M:%S'): Timeout during recovery" >&4 &&
+        kill $tailcop_PID
+    } 4>&2
 
     # Show progress while waiting untill recovery is complete
-    while read -ru ${tailcop[0]} line; do
+    while read -ru 3 line; do
         echo $line
         [ $(expr "$line" : 'LOG:\s*redo') -gt 0 ] && echo $line >>$REPORT
         [ $(expr "$line" : 'LOG:\s*last completed transaction was at log time') -gt 0 ] && echo $line >>$REPORT
         [ $(expr "$line" : 'LOG:\s*consistent recovery state reached') -gt 0 ] && echo $line >>$REPORT
         [ $(expr "$line" : 'LOG:\s*database system is ready to accept .*connections') -gt 0 ] && break
     done
-
     # non-zero exit code occurs when the tailcop file descriptor was closed before
     # we broke out of the loop
     # for example, postgres stopped or was stopped by the timeout killer
     [ $? -ne 0 ] && echo "$(date '+%m/%d %H:%M:%S'): Database recovery failed" | tee -a $REPORT && exit 1
 
+    # continue reading and showing stdout of the coprocess
+    cat <&3 &
+
     # Recovery completed, kill the timeout killer
-    # A bit rough, but hey we are in a container there will be only one sleep
-    pkill -x sleep
+    [ -n "$timeout_PID" ] && kill $timeout_PID
 
     echo "$(date '+%m/%d %H:%M:%S'): Checking database integrity"
     [ $HOTSTANDBY == 'on' ] &&  psql -qc  "select pg_xlog_replay_pause();"
@@ -114,9 +121,8 @@ EOF
     [ $RC -ne 0 ] && echo "$(date '+%m/%d %H:%M:%S'): Database integrity check failed" && exit $RC
 
     echo "$(date '+%m/%d %H:%M:%S'): Shutting down postgres"
-    # Stop the coprocess and show it's output while waiting for it to stop
-    kill $tailcop_PID
-    cat <&${tailcop[0]}
+    # Stop the coprocess and wait for it to shutdown
+    [ -n "$tailcop_PID" ] && kill $tailcop_PID && wait $tailcop_PID
     exit 0
 fi
 
