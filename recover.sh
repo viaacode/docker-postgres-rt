@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-
 [ -z "$1" ] && exit 1
 
 case  $(basename $0) in
@@ -9,10 +8,16 @@ case  $(basename $0) in
         HOTSTANDBY='off' ;;
 esac
 
+if [ ${PG_MAJOR%.*} -lt 10 ]; then
+    WAL=xlog
+else
+    WAL=wal
+fi
+
 if [ ! -s "$PGDATA/PG_VERSION" ]; then
 
     SRCDATADIR="$1"
-    SRCXLOGDIR=${2:-$SRCDATADIR/pg_xlog}
+    SRCXLOGDIR=${2:-$SRCDATADIR/pg_$WAL}
     Time=${3:-null}
     TableSpace="$4"   # Temporary support for tablespaces
     
@@ -32,7 +37,7 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
         "path": "$SRCDATADIR", \
         "uid": "$PGUID", \
         "time": "$Time", \
-        "exclude": ["$SRCDATADIR/pg_xlog/**"] \
+        "exclude": ["$SRCDATADIR/pg_$WAL/**"] \
     }
 EOF
    # Temporary support for tablespaces
@@ -56,8 +61,8 @@ EOF
     fi
 
     # if pg_xlog is a symlink, replace it by a directory:
-    [ -L $PGDATADIR/pg_xlog ] && rm $PGDATADIR/pg_xlog
-    [ -d $PGDATADIR/pg_xlog ] || mkdir $PGDATADIR/pg_xlog
+    [ -L $PGDATADIR/pg_$WAL ] && rm $PGDATADIR/pg_$WAL
+    [ -d $PGDATADIR/pg_$WAL ] || mkdir $PGDATADIR/pg_$WAL
 
     for i in $PGDATADIR/*; do ln -s $i $PGDATA/; done
 
@@ -71,7 +76,7 @@ EOF
     [ -e $PGDATA/pg_ident.conf ] || touch $PGDATA/pg_ident.conf
     cp /usr/share/postgresql/postgresql.conf.sample $PGDATA/postgresql.conf
     sed -ri "s/#?\\s*(hot_standby\\s*=)[^#]*/\1 $HOTSTANDBY /" $PGDATA/postgresql.conf
-    sed -ri 's/#?\s*(max_connections\s*=)[^#]*/\1 500 /' $PGDATA/postgresql.conf
+    sed -ri 's/#?\s*(max_connections\s*=)[^#]*/\1 2000 /' $PGDATA/postgresql.conf
     sed -ri 's/#?\s*(max_standby_archive_delay\s*=)[^#]*/\1 -1 /' $PGDATA/postgresql.conf
     echo "host all all samenet trust" > "$PGDATA/pg_hba.conf"
     echo "local all all trust"  >> "$PGDATA/pg_hba.conf"
@@ -96,10 +101,10 @@ EOF
     # Show progress while waiting untill recovery is complete
     while read -ru 3 line; do
         echo $line
-        [ $(expr "$line" : 'LOG:\s*redo') -gt 0 ] && echo $line >>$REPORT
-        [ $(expr "$line" : 'LOG:\s*last completed transaction was at log time') -gt 0 ] && echo $line >>$REPORT
-        [ $(expr "$line" : 'LOG:\s*consistent recovery state reached') -gt 0 ] && echo $line >>$REPORT
-        [ $(expr "$line" : 'LOG:\s*database system is ready to accept .*connections') -gt 0 ] && break
+        [ $(expr "$line" : '.*LOG:\s*redo') -gt 0 ] && echo $line >>$REPORT
+        [ $(expr "$line" : '.*LOG:\s*last completed transaction was at log time') -gt 0 ] && echo $line >>$REPORT
+        [ $(expr "$line" : '.*LOG:\s*consistent recovery state reached') -gt 0 ] && echo $line >>$REPORT
+        [ $(expr "$line" : '.*LOG:\s*database system is ready to accept .*connections') -gt 0 ] && break
     done
     # non-zero exit code occurs when the tailcop file descriptor was closed before
     # we broke out of the loop
@@ -113,10 +118,10 @@ EOF
     [ -n "$timeout_PID" ] && kill $timeout_PID
 
     echo "$(date '+%m/%d %H:%M:%S'): Checking database integrity"
-    [ $HOTSTANDBY == 'on' ] &&  psql -qc  "select pg_xlog_replay_pause();"
+    [ $HOTSTANDBY == 'on' ] &&  psql -qc  "select pg_${WAL}_replay_pause();"
     pg_dumpall -v -f /dev/null
     RC=$? # save rc
-    [ $HOTSTANDBY == 'on' ] &&  psql -qc  "select pg_xlog_replay_resume();"
+    [ $HOTSTANDBY == 'on' ] &&  psql -qc  "select pg_${WAL}_replay_resume();"
     echo "$(date '+%m/%d %H:%M:%S'): Database integrity check endend with exit code $RC" | tee -a $REPORT
     [ $RC -ne 0 ] && echo "$(date '+%m/%d %H:%M:%S'): Database integrity check failed" && exit $RC
 
