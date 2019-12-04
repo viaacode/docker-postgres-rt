@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
 
-[ -z "$1" ] && exit 1
+while getopts ":d:t:" opt; do
+    case $opt in
+        d) ORIGDUMP=$OPTARG
+            ;;
+        t) Time=$OPTARG
+            ;;
+        :) exit 1
+    esac
+done
 
 # Recover the dump unless it has been recovered before
 if [ ! -s "$PGDATA/PG_VERSION" ]; then
+    [ -z "$ORIGDUMP" ] && exit 1 # BackupDir mandatary
+    Time=${Time:=null}
 
-    ORIGDUMP=$1
     DumpBaseName=$(basename $ORIGDUMP)
     DUMPFILE="$RecoveryArea/$DumpBaseName"
-    Time=${2:-null}
     
     # Recover the dump file(s) name it (them) pgdump
     echo "$(date '+%m/%d %H:%M:%S'): Recovering dump file: $DUMPFILE"

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-[ -z "$1" ] && exit 1
 
 case  $(basename $0) in
     hotstandby*)
@@ -7,6 +6,20 @@ case  $(basename $0) in
     *)
         HOTSTANDBY='off' ;;
 esac
+
+while getopts ":d:l:s:t:" opt; do
+    case $opt in
+        d) SRCDATADIR=$OPTARG
+            ;;
+        l) SRCXLOGDIR=$OPTARG
+            ;;
+        s) TableSpace=$OPTARG
+            ;;
+        t) Time=$OPTARG
+            ;;
+        :) exit 1
+    esac
+done
 
 if [ ${PG_MAJOR%.*} -lt 10 ]; then
     WAL=xlog
@@ -16,10 +29,9 @@ fi
 
 if [ ! -s "$PGDATA/PG_VERSION" ]; then
 
-    SRCDATADIR="$1"
-    SRCXLOGDIR=${2:-$SRCDATADIR/pg_$WAL}
-    Time=${3:-null}
-    TableSpace="$4"   # Temporary support for tablespaces
+    [ -n "$SRCDATADIR" ] || exit 2
+    SRCXLOGDIR=${SRCXLOGDIR:=$SRCDATADIR/pg_$WAL}
+    Time=${Time:=null}
     
     PGDATADIR="$RecoveryArea/$(basename $SRCDATADIR)"
     PGUID=$(id -u postgres)
