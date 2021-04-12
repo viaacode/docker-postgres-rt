@@ -33,6 +33,7 @@ EOF
     ln -s "$DUMPFILE" "/docker-entrypoint-initdb.d/10-$DumpBaseName"
     echo "$(date '+%m/%d %H:%M:%S'): Starting postgres init"
     # Start postgres without listening on a tcp socket
+    export POSTGRES_PASSWORD="$RecoverySecret"
     coproc tailcop { exec docker-entrypoint.sh -h '' 2>&1; }
 
     # initiate a timeout killer that will stop popstgres (and the container) if init takes too long
