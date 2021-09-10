@@ -113,10 +113,13 @@ EOF
     # Show progress while waiting untill recovery is complete
     while read -ru 3 line; do
         echo $line
+        [ $(expr "$line" : '.*LOG:\s*database system is ready to accept .*connections') -gt 0 ] && break
         [ $(expr "$line" : '.*LOG:\s*redo') -gt 0 ] && echo $line >>$REPORT
         [ $(expr "$line" : '.*LOG:\s*last completed transaction was at log time') -gt 0 ] && echo $line >>$REPORT
         [ $(expr "$line" : '.*LOG:\s*consistent recovery state reached') -gt 0 ] && echo $line >>$REPORT
-        [ $(expr "$line" : '.*LOG:\s*database system is ready to accept .*connections') -gt 0 ] && break
+        if [ $(expr "$line" : '.*LOG:\s*restored log file .* from archive') -gt 0 ]; then 
+          psql -qAtc "select 'Last replay timestamp: ' || pg_last_xact_replay_timestamp();"
+        fi
     done
     # non-zero exit code occurs when the tailcop file descriptor was closed before
     # we broke out of the loop
@@ -129,6 +132,7 @@ EOF
     # Recovery completed, kill the timeout killer
     [ -n "$timeout_PID" ] && kill $timeout_PID
 
+    psql -qAtc "select 'Last replay timestamp: ' || pg_last_xact_replay_timestamp();" | tee -a $REPORT
     echo "$(date '+%m/%d %H:%M:%S'): Checking database integrity"
     [ $HOTSTANDBY == 'on' ] &&  psql -qc  "select pg_${WAL}_replay_pause();"
     pg_dumpall -v -f /dev/null
