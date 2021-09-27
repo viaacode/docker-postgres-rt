@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-
+set -x
 while getopts ":d:t:" opt; do
     case $opt in
         d) ORIGDUMP=$OPTARG
@@ -51,7 +51,7 @@ EOF
 
     while read -ru ${tailcop[0]} line; do
         echo $line
-        [ $(expr "$line" : 'LOG:\s*database system is ready to accept connections') -gt 0 ] && break
+        [ $(expr "$line" : '.*LOG:\s*database system is ready to accept connections') -gt 0 ] && break
     done
     [ $? -ne 0 ] && echo "$(date '+%m/%d %H:%M:%S'): Database init failed" &&  exit 1
     sleep 1
