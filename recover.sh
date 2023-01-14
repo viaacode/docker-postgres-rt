@@ -21,7 +21,8 @@ while getopts ":d:l:s:t:" opt; do
     esac
 done
 
-if [ ${PG_MAJOR%.*} -lt 10 ]; then
+PG_MAJOR=${PG_MAJOR%.*}  # Older image versions have a . in PG_MAJOR
+if [ $PG_MAJOR -lt 10 ]; then
     WAL=xlog
 else
     WAL=wal
@@ -78,18 +79,27 @@ EOF
 
     for i in $PGDATADIR/*; do ln -s $i $PGDATA/; done
 
-    # Create recovery.conf file
-    cat <<-EOF >$PGDATA/recovery.conf
-        standby_mode=$HOTSTANDBY
-        restore_command='echo ''{"client": "$HOSTNAME", "path": "$SRCXLOGDIR/%f", "uid": "$PGUID"}'' | socat -,ignoreeof $RecoverySocket; mv $RecoveryArea/%f $PGDATA/%p'
-	EOF
-    [ "$Time" != "null" ] && echo "recovery_target_time='$Time'" >>$PGDATA/recovery.conf
-
     [ -e $PGDATA/pg_ident.conf ] || touch $PGDATA/pg_ident.conf
     cp /usr/share/postgresql/postgresql.conf.sample $PGDATA/postgresql.conf
     sed -ri "s/#?\\s*(hot_standby\\s*=)[^#]*/\1 $HOTSTANDBY /" $PGDATA/postgresql.conf
     sed -ri 's/#?\s*(max_connections\s*=)[^#]*/\1 2000 /' $PGDATA/postgresql.conf
     sed -ri 's/#?\s*(max_standby_archive_delay\s*=)[^#]*/\1 -1 /' $PGDATA/postgresql.conf
+
+    # Create recovery.conf file
+    if [ $PG_MAJOR -lt 12 ] ; then
+        cat <<EOF >$PGDATA/recovery.conf
+        standby_mode=$HOTSTANDBY
+        restore_command='echo ''{"client": "$HOSTNAME", "path": "$SRCXLOGDIR/%f", "uid": "$PGUID"}'' | socat -,ignoreeof $RecoverySocket; mv $RecoveryArea/%f $PGDATA/%p'
+EOF
+    else
+        cat <<-EOF >>$PGDATA/postgresql.conf
+        restore_command='echo ''{"client": "$HOSTNAME", "path": "$SRCXLOGDIR/%f", "uid": "$PGUID"}'' | socat -,ignoreeof $RecoverySocket; mv $RecoveryArea/%f $PGDATA/%p'
+EOF
+        [ $HOTSTANDBY == "on" ] &&  touch $PGDATA/standby.signal || touch $PGDATA/recovery.signal
+    fi
+
+    [ "$Time" != "null" ] && echo "recovery_target_time='$Time'" >>$PGDATA/recovery.conf
+
     echo "host all all samenet trust" > "$PGDATA/pg_hba.conf"
     echo "local all all trust"  >> "$PGDATA/pg_hba.conf"
 
@@ -135,7 +145,7 @@ EOF
     psql -qAtc "select 'Last replay timestamp: ' || pg_last_xact_replay_timestamp();" | tee -a $REPORT
     echo "$(date '+%m/%d %H:%M:%S'): Checking database integrity"
     [ $HOTSTANDBY == 'on' ] &&  psql -qc  "select pg_${WAL}_replay_pause();"
-    pg_dumpall -v -f /dev/null
+    [ $PG_MAJOR -lt 10 ] && pg_dumpall -v -f /dev/null || pg_dumpall -v --no-sync -f /dev/null
     RC=$? # save rc
     [ $HOTSTANDBY == 'on' ] &&  psql -qc  "select pg_${WAL}_replay_resume();"
     echo "$(date '+%m/%d %H:%M:%S'): Database integrity check endend with exit code $RC" | tee -a $REPORT
