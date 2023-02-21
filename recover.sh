@@ -70,7 +70,7 @@ EOF
         }
 EOF
         [ -d $(dirname $TableSpace) ] || mkdir $(dirname $TableSpace)
-        ln -s $TableSpaceDir $TableSpace
+        ln -s $TableSpaceDir ${TableSpace%/}
     fi
 
     # if pg_xlog is a symlink, replace it by a directory:
