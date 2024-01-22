@@ -85,20 +85,21 @@ EOF
     sed -ri 's/#?\s*(max_connections\s*=)[^#]*/\1 2000 /' $PGDATA/postgresql.conf
     sed -ri 's/#?\s*(max_standby_archive_delay\s*=)[^#]*/\1 -1 /' $PGDATA/postgresql.conf
 
-    # Create recovery.conf file
+    # Set recovery configuration
     if [ $PG_MAJOR -lt 12 ] ; then
         cat <<EOF >$PGDATA/recovery.conf
         standby_mode=$HOTSTANDBY
-        restore_command='echo ''{"client": "$HOSTNAME", "path": "$SRCXLOGDIR/%f", "uid": "$PGUID"}'' | socat -,ignoreeof $RecoverySocket; mv $RecoveryArea/%f $PGDATA/%p'
+        restore_command='echo ''{"client": "$HOSTNAME", "path": "$SRCXLOGDIR/%f", "uid": "$PGUID", "time": "$Time"}'' | socat -,ignoreeof $RecoverySocket; mv $RecoveryArea/%f $PGDATA/%p'
 EOF
+        [ "$Time" != "null" ] && echo "recovery_target_time='$Time'" >>$PGDATA/recovery.conf
     else
         cat <<-EOF >>$PGDATA/postgresql.conf
-        restore_command='echo ''{"client": "$HOSTNAME", "path": "$SRCXLOGDIR/%f", "uid": "$PGUID"}'' | socat -,ignoreeof $RecoverySocket; mv $RecoveryArea/%f $PGDATA/%p'
+        restore_command='echo ''{"client": "$HOSTNAME", "path": "$SRCXLOGDIR/%f", "uid": "$PGUID", "time": "$Time"}'' | socat -,ignoreeof $RecoverySocket; mv $RecoveryArea/%f $PGDATA/%p'
 EOF
         [ $HOTSTANDBY == "on" ] &&  touch $PGDATA/standby.signal || touch $PGDATA/recovery.signal
+        [ "$Time" != "null" ] && echo "recovery_target_time='$Time'" >>$PGDATA/postgresql.conf
     fi
 
-    [ "$Time" != "null" ] && echo "recovery_target_time='$Time'" >>$PGDATA/recovery.conf
 
     echo "host all all samenet trust" > "$PGDATA/pg_hba.conf"
     echo "local all all trust"  >> "$PGDATA/pg_hba.conf"
