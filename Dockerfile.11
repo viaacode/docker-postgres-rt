@@ -1,4 +1,4 @@
-FROM docker.io/postgres:11
+FROM docker.io/postgres:11-bookworm
 MAINTAINER Herwig Bogaert
 
 RUN apt-get update \
