@@ -63,7 +63,5 @@ EOF
     # Stop the coprocess and show it's output while waiting for it to stop
     kill $tailcop_PID
     cat <&${tailcop[0]}
-else
-    # delegate control to docker-io/postgres container implementation"
-    exec docker-entrypoint.sh postgres
 fi
+exec docker-entrypoint.sh postgres

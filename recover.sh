@@ -128,9 +128,6 @@ EOF
         [ $(expr "$line" : '.*LOG:\s*redo') -gt 0 ] && echo $line >>$REPORT
         [ $(expr "$line" : '.*LOG:\s*last completed transaction was at log time') -gt 0 ] && echo $line >>$REPORT
         [ $(expr "$line" : '.*LOG:\s*consistent recovery state reached') -gt 0 ] && echo $line >>$REPORT
-        if [ $(expr "$line" : '.*LOG:\s*restored log file .* from archive') -gt 0 ]; then 
-          psql -qAtc "select 'Last replay timestamp: ' || pg_last_xact_replay_timestamp();"
-        fi
     done
     # non-zero exit code occurs when the tailcop file descriptor was closed before
     # we broke out of the loop
@@ -155,7 +152,6 @@ EOF
     echo "$(date '+%m/%d %H:%M:%S'): Shutting down postgres"
     # Stop the coprocess and wait for it to shutdown
     [ -n "$tailcop_PID" ] && kill $tailcop_PID && wait $tailcop_PID
-    exit 0
 fi
 
 # Xhen called as hotstandby or with docker start with existing PGDATA,

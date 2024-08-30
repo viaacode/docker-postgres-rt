@@ -1,4 +1,4 @@
-FROM postgres:12
+FROM docker.io/postgres:12
 MAINTAINER Herwig Bogaert
 
 RUN apt-get update \
@@ -15,9 +15,9 @@ COPY recover.sh /usr/local/bin/
 RUN ln /usr/local/bin/recover.sh /usr/local/bin/hotstandby.sh
 
 
-ARG RecoveryAreaGid=4
+ARG RecoveryAreaGid
 # local postgres user can write to the recovery socket and access the recovery area
-RUN usermod -G $RecoveryAreaGid postgres
+RUN groupadd -g $RecoveryAreaGid && usermod -G $RecoveryAreaGid postgres
 
 ARG CODESET=UTF-8
 ARG LANG_TERR=en_US
