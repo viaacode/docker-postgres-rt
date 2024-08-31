@@ -17,7 +17,7 @@ RUN ln /usr/local/bin/recover.sh /usr/local/bin/hotstandby.sh
 
 ARG RecoveryAreaGid
 # local postgres user can write to the recovery socket and access the recovery area
-RUN groupadd -g $RecoveryAreaGid && usermod -G $RecoveryAreaGid postgres
+RUN groupadd -g $RecoveryAreaGid recovery && usermod -G $RecoveryAreaGid postgres
 
 ARG CODESET=UTF-8
 ARG LANG_TERR=en_US
