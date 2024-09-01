@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -x
 while getopts ":d:t:" opt; do
     case $opt in
         d) ORIGDUMP=$OPTARG
@@ -46,7 +45,6 @@ EOF
     done
     # non-zero exit code occurs when the tailcop file descriptor was closed before 
     # we broke out of the loop
-    # for example, postgres stopped or was stopped by the timeout killer 
     [ $? -ne 0 ] && echo "$(date '+%m/%d %H:%M:%S'): Database init failed" &&  exit 1
 
     while read -ru ${tailcop[0]} line; do
@@ -54,14 +52,11 @@ EOF
         [ $(expr "$line" : '.*LOG:\s*database system is ready to accept connections') -gt 0 ] && break
     done
     [ $? -ne 0 ] && echo "$(date '+%m/%d %H:%M:%S'): Database init failed" &&  exit 1
-    sleep 1
-
-    # Init completed, kill the timeout killer
-    # A bit rough, but hey we are in a container there will be only one sleep
-    pkill -x sleep
+    # continue reading and showing stdout of the coprocess
+    exec 3<&${tailcop[0]}
+    cat <&3 &
     echo "$(date '+%m/%d %H:%M:%S'): Shutting down postgres"
     # Stop the coprocess and show it's output while waiting for it to stop
-    kill $tailcop_PID
-    cat <&${tailcop[0]}
+    [ -n "$tailcop_PID" ] && kill $tailcop_PID && wait $tailcop_PID
 fi
 exec docker-entrypoint.sh postgres

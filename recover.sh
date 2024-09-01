@@ -13,25 +13,16 @@ while getopts ":d:l:s:t:" opt; do
             ;;
         l) SRCXLOGDIR=$OPTARG
             ;;
-        s) TableSpace=$OPTARG
-            ;;
         t) Time=$OPTARG
             ;;
         :) exit 1
     esac
 done
 
-PG_MAJOR=${PG_MAJOR%.*}  # Older image versions have a . in PG_MAJOR
-if [ $PG_MAJOR -lt 10 ]; then
-    WAL=xlog
-else
-    WAL=wal
-fi
-
 if [ ! -s "$PGDATA/PG_VERSION" ]; then
 
     [ -n "$SRCDATADIR" ] || exit 2
-    SRCXLOGDIR=${SRCXLOGDIR:=$SRCDATADIR/pg_$WAL}
+    SRCXLOGDIR=${SRCXLOGDIR:=$SRCDATADIR/pg_wal}
     Time=${Time:=null}
     
     PGDATADIR="$RecoveryArea/$(basename $SRCDATADIR)"
@@ -42,7 +33,7 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
     # Clean up
     rm -fr $PGDATADIR
     rm -f  $RecoveryArea/[0-9A-F]*[0-9A-F]
-    # Do not recover pg_xlog (this is needed when not symlinked outside)
+    # Do not recover pg_wal (this is needed when not symlinked outside)
     echo "$(date '+%m/%d %H:%M:%S'): Recovering Database files"
     cat <<EOF | socat -,ignoreeof $RecoverySocket
     { \
@@ -50,32 +41,12 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
         "path": "$SRCDATADIR", \
         "uid": "$PGUID", \
         "time": "$Time", \
-        "exclude": ["$SRCDATADIR/pg_$WAL/**"] \
+        "exclude": ["$SRCDATADIR/pg_wal/**"] \
     }
 EOF
-   # Temporary support for tablespaces
-   # problem is that they have absolute pathnames
-   # This runs unprivilged and hence will fail if the path is not writable
-   # by postgres user
-
-   if [ -n "$TableSpace" ]; then
-        TableSpaceDir="$RecoveryArea/$(basename $TableSpace)"
-        rm -fr $TableSpaceDir
-        cat <<EOF | socat -,ignoreeof $RecoverySocket
-        { \
-            "client": "$HOSTNAME", \
-            "path": "$TableSpace", \
-            "uid": "$PGUID", \
-            "time": "$Time" \
-        }
-EOF
-        [ -d $(dirname $TableSpace) ] || mkdir $(dirname $TableSpace)
-        ln -s $TableSpaceDir ${TableSpace%/}
-    fi
-
-    # if pg_xlog is a symlink, replace it by a directory:
-    [ -L $PGDATADIR/pg_$WAL ] && rm $PGDATADIR/pg_$WAL
-    [ -d $PGDATADIR/pg_$WAL ] || mkdir $PGDATADIR/pg_$WAL
+    # if pg_wal is a symlink, replace it by a directory:
+    [ -L $PGDATADIR/pg_wal ] && rm $PGDATADIR/pg_wal
+    [ -d $PGDATADIR/pg_wal ] || mkdir $PGDATADIR/pg_wal
 
     for i in $PGDATADIR/*; do ln -s $i $PGDATA/; done
 
@@ -112,17 +83,8 @@ EOF
     # Start postgres without listening on a tcp socket
     coproc tailcop { exec docker-entrypoint.sh -h '' 2>&1; }
 
-    exec 3<&${tailcop[0]}
-
-    # initiate a timeout killer that will stop popstgres if recovery takes too long
-    coproc timeout {
-        sleep 10800 &&
-        echo "$(date '+%m/%d %H:%M:%S'): Timeout during recovery" >&4 &&
-        kill $tailcop_PID
-    } 4>&2
-
     # Show progress while waiting untill recovery is complete
-    while read -ru 3 line; do
+    while read -ru ${tailcop[0]} line; do
         echo $line
         [ $(expr "$line" : '.*LOG:\s*database system is ready to accept .*connections') -gt 0 ] && break
         [ $(expr "$line" : '.*LOG:\s*redo') -gt 0 ] && echo $line >>$REPORT
@@ -135,17 +97,15 @@ EOF
     [ $? -ne 0 ] && echo "$(date '+%m/%d %H:%M:%S'): Database recovery failed" | tee -a $REPORT && exit 1
 
     # continue reading and showing stdout of the coprocess
+    exec 3<&${tailcop[0]}
     cat <&3 &
-
-    # Recovery completed, kill the timeout killer
-    [ -n "$timeout_PID" ] && kill $timeout_PID
 
     psql -qAtc "select 'Last replay timestamp: ' || pg_last_xact_replay_timestamp();" | tee -a $REPORT
     echo "$(date '+%m/%d %H:%M:%S'): Checking database integrity"
-    [ $HOTSTANDBY == 'on' ] &&  psql -qc  "select pg_${WAL}_replay_pause();"
-    [ $PG_MAJOR -lt 10 ] && pg_dumpall -v -f /dev/null || pg_dumpall -v --no-sync -f /dev/null
+    [ $HOTSTANDBY == 'on' ] &&  psql -qc  "select pg_wal_replay_pause();"
+    pg_dumpall -v --no-sync -f /dev/null
     RC=$? # save rc
-    [ $HOTSTANDBY == 'on' ] &&  psql -qc  "select pg_${WAL}_replay_resume();"
+    [ $HOTSTANDBY == 'on' ] &&  psql -qc  "select pg_wal_replay_resume();"
     echo "$(date '+%m/%d %H:%M:%S'): Database integrity check endend with exit code $RC" | tee -a $REPORT
     [ $RC -ne 0 ] && echo "$(date '+%m/%d %H:%M:%S'): Database integrity check failed" && exit $RC
 
@@ -153,8 +113,5 @@ EOF
     # Stop the coprocess and wait for it to shutdown
     [ -n "$tailcop_PID" ] && kill $tailcop_PID && wait $tailcop_PID
 fi
-
-# Xhen called as hotstandby or with docker start with existing PGDATA,
-# just start postgres and keep running
+# When started with existing PGDATA, just start postgres and keep running
 exec docker-entrypoint.sh postgres
-
