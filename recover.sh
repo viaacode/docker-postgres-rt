@@ -65,20 +65,19 @@ EOF
     # Set recovery configuration
     # Start database in read/only mode until consistency checks have completed
     if [ $PG_MAJOR -lt 12 ] ; then
-        cat <<EOF >$PGDATA/recovery.conf
-        standby_mode=on
-        restore_command='echo ''{"client": "$HOSTNAME", "path": "$SRCXLOGDIR/%f", "uid": "$PGUID", "time": "$Time"}'' | socat -,ignoreeof $RecoverySocket; mv $RecoveryArea/%f $PGDATA/%p'
-EOF
-        [ "$Time" != "null" ] && echo "recovery_target_time='$Time'" >>$PGDATA/recovery.conf
+	ConfFile=recovery.conf
     else
-        cat <<-EOF >>$PGDATA/postgresql.conf
-        restore_command='echo ''{"client": "$HOSTNAME", "path": "$SRCXLOGDIR/%f", "uid": "$PGUID", "time": "$Time"}'' | socat -,ignoreeof $RecoverySocket; mv $RecoveryArea/%f $PGDATA/%p'
-EOF
+	ConfFile=postgresql.conf
         touch $PGDATA/standby.signal
-        [ "$Time" != "null" ] && echo "recovery_target_time='$Time'" >>$PGDATA/postgresql.conf
     fi
-
-
+    cat <<EOF >>$PGDATA/$ConfFile
+    restore_command='echo ''{"client": "$HOSTNAME", "path": "$SRCXLOGDIR/%f", "uid": "$PGUID", "time": "$Time"}'' | socat -,ignoreeof $RecoverySocket; mv $RecoveryArea/%f $PGDATA/%p'
+EOF
+    if [ "$Time" != "null" ]; then
+        echo "recovery_target_time='$Time'" >>$PGDATA/$ConfFile
+    else
+        echo "recovery_target = 'immediate'" >>$PGDATA/$ConfFile
+    fi
     echo "host all all samenet trust" > "$PGDATA/pg_hba.conf"
     echo "local all all trust"  >> "$PGDATA/pg_hba.conf"
 
@@ -102,26 +101,28 @@ EOF
     done
     # non-zero exit code occurs when the tailcop file descriptor was closed before
     # we broke out of the loop
-    # for example, postgres stopped or was stopped by the timeout killer
+    # for example, postgres stopped
     [ $? -ne 0 ] && echo "$(date '+%m/%d %H:%M:%S'): Database recovery failed" | tee -a $REPORT && exit 1
 
     # continue reading and showing stdout of the coprocess
     # redirecting from ${tailcop[0]} directly to cat does not work, use exec
     exec 3<&${tailcop[0]}
     cat <&3 &
-    # Stop searching for wal's to apply (until consistency check has completed)
-    psql -qAc "select pg_wal_replay_pause();"
     # Report recovery timestamp
     psql -qAtc "select 'Last replay timestamp: ' || pg_last_xact_replay_timestamp();" | tee -a $REPORT
 
     echo "$(date '+%m/%d %H:%M:%S'): Checking database integrity"
+    # Stop searching for wal's to apply (until consistency check has completed)
+    # Only needed when recovery_target is not immediate
+    [ "$Time" != "null" ] && psql -qAc "select pg_wal_replay_pause();"
     pg_dumpall -v --no-sync -f /dev/null
     RC=$? # save rc
     echo "$(date '+%m/%d %H:%M:%S'): Database integrity check endend with exit code $RC" | tee -a $REPORT
     [ $RC -ne 0 ] && echo "$(date '+%m/%d %H:%M:%S'): Database integrity check failed" && exit $RC
 
     # Leave temporary read-only mode when hotstandby is not requested
-    [ $HOTSTANDBY != 'on' ] && pg_ctl promote
+    [ $PG_MAJOR -lt 12 ] &&  psql -qAc "select pg_wal_replay_resume();" # These versions require resume before promote
+    [ $HOTSTANDBY != 'on' ] && pg_ctl promote --wait --silent --timeout 120
 
     echo "$(date '+%m/%d %H:%M:%S'): Shutting down postgres"
     # Stop the coprocess and wait for it to shutdown
