@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-while getopts ":d:t:" opt; do
+while getopts ":d:l:t:" opt; do
     case $opt in
         d) ORIGDUMP=$OPTARG
             ;;

@@ -7,7 +7,7 @@ case  $(basename $0) in
         HOTSTANDBY='off' ;;
 esac
 
-while getopts ":d:l:s:t:" opt; do
+while getopts ":d:l:t:" opt; do
     case $opt in
         d) SRCDATADIR=$OPTARG
             ;;
