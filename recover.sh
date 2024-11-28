@@ -129,11 +129,13 @@ EOF
     # Report recovery timestamp
     psql -qAtc "select 'Last replay timestamp: ' || pg_last_xact_replay_timestamp();" | tee -a $REPORT
 
-    echo "$(date '+%m/%d %H:%M:%S'): Checking database integrity"
-    pg_dumpall -v --no-sync -f /dev/null
-    RC=$? # save rc
-    echo "$(date '+%m/%d %H:%M:%S'): Database integrity check endend with exit code $RC" | tee -a $REPORT
-    [ $RC -ne 0 ] && echo "$(date '+%m/%d %H:%M:%S'): Database integrity check failed" && exit $RC
+    if [ "$Time" == "null" ]; then
+      echo "$(date '+%m/%d %H:%M:%S'): Checking database integrity"
+      pg_dumpall -v --no-sync -f /dev/null
+      RC=$? # save rc
+      echo "$(date '+%m/%d %H:%M:%S'): Database integrity check endend with exit code $RC" | tee -a $REPORT
+      [ $RC -ne 0 ] && echo "$(date '+%m/%d %H:%M:%S'): Database integrity check failed" && exit $RC
+    fi
 
     # Leave temporary read-only mode when hotstandby is not requested
     [ $PG_MAJOR -lt 12 ] &&  psql -qAc "select pg_wal_replay_resume();" # These versions require resume before promote
