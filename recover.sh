@@ -76,17 +76,22 @@ EOF
 	# given. Therfore we shift the time window in which we are looking for backups for 4 hours.
         RPOEpoch=$(date -d "$Time" +%s)
         WalTimeEpoch=$((RPOEpoch + 4*3600))
-        WalTime=$(date -d @$WalTimeEpoch -Ins)
+        AvWalTime=$(date -d @$WalTimeEpoch -Ins)
+        WalTime=$(date -ud @$RPOEpoch -Is)  # This is in UTC
     else
-        WalTime="$Time"
+        AvWalTime="$Time"
     fi
     cat <<EOF >>$PGDATA/$ConfFile
-    restore_command='echo ''{"client": "$HOSTNAME", "path": "$SRCXLOGDIR/%f", "uid": "$PGUID", "time": "$WalTime"}'' | socat -,ignoreeof $RecoverySocket; mv $RecoveryArea/%f $PGDATA/%p'
+    restore_command='echo ''{"client": "$HOSTNAME", "path": "$SRCXLOGDIR/%f", "uid": "$PGUID", "time": "$AvWalTime"}'' | socat -,ignoreeof $RecoverySocket; mv $RecoveryArea/%f $PGDATA/%p'
 EOF
+    # Set recovery target (Use UTC timestamp)
+    # Let recovery_target_action at the default value of 'pause'
+    # We only promote after running consistency checks
     if [ "$Time" != "null" ]; then
-        echo "recovery_target_time='$Time'" >>$PGDATA/$ConfFile
+        echo "recovery_target_time='$WalTime'" >>$PGDATA/$ConfFile
+	echo "recovery_target_inclusive = false" >>$PGDATA/$ConfFile
     else
-	# If $Time is not set, we recover until consistent
+        # If $Time is not set, we recover until consistent
         echo "recovery_target = 'immediate'" >>$PGDATA/$ConfFile
     fi
     echo "host all all samenet trust" > "$PGDATA/pg_hba.conf"
@@ -99,7 +104,7 @@ EOF
     # Start postgres without listening on a tcp socket
     coproc tailcop { exec docker-entrypoint.sh -h '' 2>&1; }
 
-    # Show progress while waiting untill recovery is complete
+    # Show progress while waiting untill consistent recovery state reached
     while read -ru ${tailcop[0]} line; do
         echo $line
 	# Break when consistent recovery state is reached
@@ -114,7 +119,7 @@ EOF
     # for example, postgres stopped
     [ $? -ne 0 ] && echo "$(date '+%m/%d %H:%M:%S'): Database recovery failed" | tee -a $REPORT && exit 1
 
-    # If $Time is set, we need to allow time for recovery to continue until the recovery_target is reached
+    # If $Time is set, we need recovery to continue until the recovery_target is reached
     if [ "$Time" != "null" ]; then
       while read -ru ${tailcop[0]} line; do
         echo $line
@@ -129,7 +134,8 @@ EOF
     # Report recovery timestamp
     psql -qAtc "select 'Last replay timestamp: ' || pg_last_xact_replay_timestamp();" | tee -a $REPORT
 
-    if [ "$Time" == "null" ]; then
+    # Check integrity unless recovery target is given or hotstandby is on
+    if [ "$Time" == "null"  -a $HOTSTANDBY != 'on' ]; then
       echo "$(date '+%m/%d %H:%M:%S'): Checking database integrity"
       pg_dumpall -v --no-sync -f /dev/null
       RC=$? # save rc
@@ -137,10 +143,23 @@ EOF
       [ $RC -ne 0 ] && echo "$(date '+%m/%d %H:%M:%S'): Database integrity check failed" && exit $RC
     fi
 
-    # Leave temporary read-only mode when hotstandby is not requested
-    [ $PG_MAJOR -lt 12 ] &&  psql -qAc "select pg_wal_replay_resume();" # These versions require resume before promote
-    [ $HOTSTANDBY != 'on' ] && pg_ctl promote --wait --silent --timeout 120
+    # Leave temporary read-only mode (promote) when hotstandby is not requested
+    # When hotstandby, we do not promote and leave the recovery pauzed such
+    # that recovery can be continued
+    # by altering the recovery target and restarting the container.
+    if [ $HOTSTANDBY != 'on' ]; then
+      kill $!  # Stop the cat process reading the output of our coprocces
+      psql -qAc "select pg_wal_replay_resume();" # This will promote if recovery target has been reached
+      # Wait until promotion is completed.
+      while read -ru ${tailcop[0]} line; do
+          echo $line
+          [ $(expr "$line" : '.*LOG:\s*database system is ready to accept .*connections') -gt 0 ] && break
+      done
+    fi
 
+    # Shut down the database in order to restart it just as in the original postgresql container
+    # At this point, postgres will start listening on its public TCP socket
+    # signaling that recovery is completed.
     echo "$(date '+%m/%d %H:%M:%S'): Shutting down postgres"
     # Stop the coprocess and wait for it to shutdown
     [ -n "$tailcop_PID" ] && kill $tailcop_PID && wait $tailcop_PID
