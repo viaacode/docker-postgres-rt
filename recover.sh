@@ -33,6 +33,7 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
     # Clean up
     rm -fr $PGDATADIR
     rm -f  $RecoveryArea/[0-9A-F]*[0-9A-F]
+    rm -f  $RecoveryArea/[0-9A-F]*[0-9A-F].backup*
     # Do not recover pg_wal (this is needed when not symlinked outside)
     echo "$(date '+%m/%d %H:%M:%S'): Recovering Database files"
     cat <<EOF | socat -,ignoreeof $RecoverySocket
@@ -64,13 +65,8 @@ EOF
 
     # Set recovery configuration
     # Start database in read/only mode until consistency checks have completed
-    if [ $PG_MAJOR -lt 12 ] ; then
-	ConfFile=recovery.conf
-    else
-	ConfFile=postgresql.conf
-        touch $PGDATA/standby.signal
-    fi
-   if [ "$Time" != "null" ]; then
+    touch $PGDATA/standby.signal
+    if [ "$Time" != "null" ]; then
 	# When recovery_target_time is given, postgres may need to examine wal records that have been
 	# archived later then the given timestamp in order to find the first commit after the timestamp
 	# given. Therfore we shift the time window in which we are looking for backups for 4 hours.
@@ -81,24 +77,38 @@ EOF
     else
         AvWalTime="$Time"
     fi
-    cat <<EOF >>$PGDATA/$ConfFile
+    cat <<EOF >>$PGDATA/postgresql.conf
     restore_command='echo ''{"client": "$HOSTNAME", "path": "$SRCXLOGDIR/%f", "uid": "$PGUID", "time": "$AvWalTime"}'' | socat -,ignoreeof $RecoverySocket; mv $RecoveryArea/%f $PGDATA/%p'
 EOF
     # Set recovery target (Use UTC timestamp)
     # Let recovery_target_action at the default value of 'pause'
     # We only promote after running consistency checks
     if [ "$Time" != "null" ]; then
-        echo "recovery_target_time='$WalTime'" >>$PGDATA/$ConfFile
-	echo "recovery_target_inclusive = false" >>$PGDATA/$ConfFile
+        echo "recovery_target_time='$WalTime'" >>$PGDATA/postgresql.conf
+	echo "recovery_target_inclusive = false" >>$PGDATA/postgresql.conf
     else
         # If $Time is not set, we recover until consistent
-        echo "recovery_target = 'immediate'" >>$PGDATA/$ConfFile
+        echo "recovery_target = 'immediate'" >>$PGDATA/postgresql.conf
     fi
     echo "host all all samenet trust" > "$PGDATA/pg_hba.conf"
     echo "local all all trust"  >> "$PGDATA/pg_hba.conf"
 
     echo -e "\n$(date '+%m/%d %H:%M:%S'): Recovery report for $HOSTNAME:\n" >>$REPORT
-    cat $PGDATADIR/backup_label 2>&1 | tee -a $REPORT
+    if [ $PG_MAJOR -ge 14 ]; then
+      # only non-exclusive backups in version 14 and above
+      # First recover the backup label
+      BACKUP_LABEL_FILE=$(cat $PGDATADIR/backup.info)
+      cat <<EOF | socat -,ignoreeof $RecoverySocket
+      { \
+          "client": "$HOSTNAME", \
+          "path": "$BACKUP_LABEL_FILE", \
+          "uid": "$PGUID", \
+          "time": "$Time" \
+      }
+EOF
+      mv $RecoveryArea/$(basename "$BACKUP_LABEL_FILE") "$PGDATA/backup_label"
+    fi
+    cat $PGDATA/backup_label 2>&1 | tee -a $REPORT
     echo "$(date '+%m/%d %H:%M:%S'): Starting postgres recovery (hot_standby = $HOTSTANDBY)"
 
     # Start postgres without listening on a tcp socket
@@ -157,8 +167,8 @@ EOF
       done
     fi
 
-    # Shut down the database in order to restart it just as in the original postgresql container
-    # At this point, postgres will start listening on its public TCP socket
+    # Shut down the database in order to restart it using the original postgresql container's
+    # entrypoint. At this point, postgres will start listening on its public TCP socket
     # signaling that recovery is completed.
     echo "$(date '+%m/%d %H:%M:%S'): Shutting down postgres"
     # Stop the coprocess and wait for it to shutdown
