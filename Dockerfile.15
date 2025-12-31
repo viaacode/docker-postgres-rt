@@ -1,0 +1,35 @@
+# Take 15-bookworm beceause tag 15 is created based on trixie while our
+# postgres 15 deploymentes are on bookworm
+# The Trixie based image produces the following warning:
+# WARNING:  database "postgres" has a collation version mismatch                                        
+# DETAIL:  The database was created using collation version 2.36, but the
+#          operating system provides version 2.41.
+# HINT:  Rebuild all objects in this database that use the default collation and
+#        run ALTER DATABASE postgres REFRESH COLLATION VERSION, or build
+#        PostgreSQL with the right library version.
+FROM docker.io/postgres:15-bookworm
+MAINTAINER Herwig Bogaert
+
+RUN apt-get update \
+    && apt-get install -y file socat \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN chown postgres /docker-entrypoint-initdb.d
+
+ENV RecoveryArea /recovery_area
+ENV RecoverySocket "unix:/recovery_socket"
+
+COPY load.sh /usr/local/bin/
+COPY recover.sh /usr/local/bin/
+RUN ln /usr/local/bin/recover.sh /usr/local/bin/hotstandby.sh
+
+
+ARG RecoveryAreaGid
+# local postgres user can write to the recovery socket and access the recovery area
+RUN groupadd -g $RecoveryAreaGid recovery && usermod -G $RecoveryAreaGid postgres
+
+ARG CODESET=UTF-8
+ARG LANG_TERR=nl_BE
+RUN localedef -i ${LANG_TERR} -c -f ${CODESET} -A /usr/share/locale/locale.alias ${LANG_TERR}.${CODESET}
+
+USER postgres
