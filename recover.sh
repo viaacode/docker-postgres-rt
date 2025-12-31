@@ -57,9 +57,14 @@ EOF
     sed -ri 's/#?\s*(autovacuum\s*=)[^#]*/\1 off/' $PGDATA/postgresql.conf
     sed -ri 's/#?\s*(track_activities\s*=)[^#]*/\1 off/' $PGDATA/postgresql.conf
     sed -ri 's/#?\s*(track_counts\s*=)[^#]*/\1 off/' $PGDATA/postgresql.conf
-    # Take 2 thirds of our memory limit for shared buffers
+    # Set parameters that depend on memory size
     MemoryLimit=$(cat /sys/fs/cgroup/memory.max)
-    [ -n "$MemoryLimit" ] && sed -ri "s/#?\s*(shared_buffers\s*=)[^#]*/\1 $((MemoryLimit/4096))kB/" $PGDATA/postgresql.conf
+    if [ -n "$MemoryLimit" ]; then
+        # Take half our memory limit for shared buffers
+        sed -ri "s/#?\s*(shared_buffers\s*=)[^#]*/\1 $((MemoryLimit/2048))kB/" $PGDATA/postgresql.conf
+        # Set Workmem to 1/32 of the memory size
+        sed -ri "s/#?\s*(work_mem\s*=)[^#]*/\1 $((MemoryLimit/32768))kB /" $PGDATA/postgresql.conf
+    fi
     sed -ri 's/#?\s*(max_connections\s*=)[^#]*/\1 2000 /' $PGDATA/postgresql.conf
     sed -ri 's/#?\s*(max_standby_archive_delay\s*=)[^#]*/\1 -1 /' $PGDATA/postgresql.conf
 
@@ -117,11 +122,10 @@ EOF
     # Show progress while waiting untill consistent recovery state reached
     while read -ru ${tailcop[0]} line; do
         echo $line
-	# Break when consistent recovery state is reached
-        [ $(expr "$line" : '.*LOG:\s*database system is ready to accept .*connections') -gt 0 ] && break
-	# Extract certain log entries for the recovery report
-        [ $(expr "$line" : '.*LOG:\s*redo') -gt 0 ] && echo $line >>$REPORT
-        [ $(expr "$line" : '.*LOG:\s*last completed transaction was at log time') -gt 0 ] && echo $line >>$REPORT
+        # Break when recover is finished
+        [ $(expr "$line" : '.*LOG:\s*recovery stopping ') -gt 0 ] && break
+        # Extract certain log entries for the recovery report
+        [ $(expr "$line" : '.*LOG:.*\sredo\s') -gt 0 ] && echo $line >>$REPORT
         [ $(expr "$line" : '.*LOG:\s*consistent recovery state reached') -gt 0 ] && echo $line >>$REPORT
     done
     # non-zero exit code occurs when the tailcop file descriptor was closed before
@@ -129,14 +133,6 @@ EOF
     # for example, postgres stopped
     [ $? -ne 0 ] && echo "$(date '+%m/%d %H:%M:%S'): Database recovery failed" | tee -a $REPORT && exit 1
 
-    # If $Time is set, we need recovery to continue until the recovery_target is reached
-    if [ "$Time" != "null" ]; then
-      while read -ru ${tailcop[0]} line; do
-        echo $line
-	# Break when recovery is complete:
-        [ $(expr "$line" : '.*LOG:\s*recovery stopping ') -gt 0 ] && break
-      done
-    fi
     # continue reading and showing stdout of the coprocess
     # redirecting from ${tailcop[0]} directly to cat does not work, use exec
     exec 3<&${tailcop[0]}
